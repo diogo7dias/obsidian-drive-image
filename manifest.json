@@ -1,0 +1,10 @@
+{
+	"id": "drive-image",
+	"name": "Drive Image",
+	"version": "0.1.0",
+	"minAppVersion": "0.15.0",
+	"description": "Paste images, auto-upload to Google Drive, replace with public embed URL.",
+	"author": "Diogo Dias",
+	"authorUrl": "https://github.com/diogo7dias",
+	"isDesktopOnly": false
+}
