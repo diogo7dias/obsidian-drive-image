@@ -22,9 +22,21 @@ Personal-use plugin. No telemetry, no shared OAuth client, no server. Direct Goo
 - Device-code OAuth (works on mobile)
 - Token refresh
 
-Not in v0.1 (planned for later commands):
+## v0.2 — bulk migration
 
-- Bulk migration of existing `attachments/` to Drive
+Command palette → **Drive Image: Migrate local images to Drive**.
+
+Scans every note for locally-stored image embeds (both `![[wikilink]]` and `![](markdown)` styles), uploads each unique image to your Drive folder once, and rewrites every reference to a public Drive URL. A confirmation dialog offers two modes:
+
+- **Migrate, keep locals** — uploads and rewrites links, leaves local files in place.
+- **Migrate & delete locals** — same, then moves successfully-migrated local files to system trash to shrink the vault. Only files whose every reference was rewritten cleanly are deleted.
+
+Images that fail to upload are left untouched (note and local file unchanged). Errors are reported in a notice and logged to the developer console.
+
+Tip: commit or back up your vault before running with delete enabled, so you have a rollback point.
+
+Not yet implemented (planned for later):
+
 - Orphan pruning (Drive files no longer referenced anywhere)
 - Threshold rules (only upload images above N MB)
 - Multi-folder routing

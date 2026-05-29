@@ -1,4 +1,4 @@
-import { Editor, MarkdownView, Notice, Plugin, TFile } from "obsidian";
+import { Editor, MarkdownView, Notice, Plugin } from "obsidian";
 import {
 	DEFAULT_SETTINGS,
 	DeviceCodeModal,
@@ -19,6 +19,7 @@ import {
 	resolveFolderId,
 	uploadImage,
 } from "./drive";
+import { migrateVaultImages, MigrateConfirmModal, notifyResult } from "./migrate";
 
 const LOCAL_FALLBACK_DIR = "attachments";
 
@@ -35,6 +36,32 @@ export default class DriveImagePlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on("editor-drop", this.handleDrop.bind(this)),
 		);
+
+		this.addCommand({
+			id: "migrate-local-images",
+			name: "Migrate local images to Drive",
+			callback: () => {
+				if (!this.isSignedIn()) {
+					new Notice("Drive Image: sign in first (Settings → Drive Image).");
+					return;
+				}
+				new MigrateConfirmModal(this.app, async (deleteLocals) => {
+					const progress = new Notice("Drive Image: starting migration...", 0);
+					try {
+						const stats = await migrateVaultImages(this, deleteLocals, (msg) =>
+							progress.setMessage("Drive Image: " + msg),
+						);
+						progress.hide();
+						notifyResult(stats);
+					} catch (e) {
+						progress.hide();
+						const msg = e instanceof Error ? e.message : String(e);
+						new Notice("Drive Image: migration failed. " + msg, 10000);
+						console.error("[drive-image] migration crashed:", e);
+					}
+				}).open();
+			},
+		});
 	}
 
 	onunload() {}
@@ -140,14 +167,7 @@ export default class DriveImagePlugin extends Plugin {
 		const buf = await file.arrayBuffer();
 
 		try {
-			if (!this.isSignedIn()) {
-				throw new Error("not signed in — open Settings → Drive Image to sign in.");
-			}
-			const accessToken = await this.getAccessToken();
-			const folderId = await this.ensureFolder(accessToken);
-			const uploaded = await uploadImage(accessToken, buf, file.type || "image/png", filename, folderId);
-			await makeAnyoneReader(accessToken, uploaded.id);
-			const url = embedUrl(uploaded.id);
+			const url = await this.uploadBuffer(buf, file.type || "image/png", filename);
 			replaceInEditor(editor, placeholder, `![](${url})`);
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
@@ -155,6 +175,21 @@ export default class DriveImagePlugin extends Plugin {
 			await this.fallbackToLocal(buf, filename, view, editor, placeholder);
 			new Notice("Drive Image: upload failed, saved locally. " + msg);
 		}
+	}
+
+	/**
+	 * Upload a buffer to Drive, make it public, return the embed URL.
+	 * Shared by paste-flow and the bulk migrate command. Throws on any failure.
+	 */
+	async uploadBuffer(buf: ArrayBuffer, mimeType: string, filename: string): Promise<string> {
+		if (!this.isSignedIn()) {
+			throw new Error("not signed in — open Settings → Drive Image to sign in.");
+		}
+		const accessToken = await this.getAccessToken();
+		const folderId = await this.ensureFolder(accessToken);
+		const uploaded = await uploadImage(accessToken, buf, mimeType, filename, folderId);
+		await makeAnyoneReader(accessToken, uploaded.id);
+		return embedUrl(uploaded.id);
 	}
 
 	private async fallbackToLocal(
@@ -274,6 +309,3 @@ function replaceInEditor(editor: Editor, needle: string, replacement: string) {
 function sleep(ms: number): Promise<void> {
 	return new Promise((r) => setTimeout(r, ms));
 }
-
-// Suppress unused TFile import warning if tree-shaken
-export const _unused = TFile;
