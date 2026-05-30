@@ -8,6 +8,13 @@ export interface UploadResult {
 	name: string;
 }
 
+export interface DriveFile {
+	id: string;
+	name: string;
+	/** Size in bytes. Absent for some file types; treat missing as 0. */
+	size: number;
+}
+
 export class DriveError extends Error {
 	constructor(public status: number, message: string) {
 		super(message);
@@ -123,4 +130,62 @@ export async function makeAnyoneReader(accessToken: string, fileId: string): Pro
 
 export function embedUrl(fileId: string): string {
 	return `https://lh3.googleusercontent.com/d/${fileId}`;
+}
+
+/**
+ * List every non-trashed file directly inside a folder.
+ * Follows pageToken so folders with more than one page are fully enumerated —
+ * the orphan scan MUST see every file or it could trash a live image it never listed.
+ */
+export async function listFolderFiles(accessToken: string, folderId: string): Promise<DriveFile[]> {
+	const out: DriveFile[] = [];
+	let pageToken: string | undefined;
+	const q = `'${folderId}' in parents and trashed=false`;
+
+	do {
+		const params = new URLSearchParams({
+			q,
+			fields: "nextPageToken,files(id,name,size)",
+			pageSize: "1000",
+		});
+		if (pageToken) params.set("pageToken", pageToken);
+
+		const res = await requestUrl({
+			url: `${FILES_URL}?${params.toString()}`,
+			method: "GET",
+			headers: { Authorization: `Bearer ${accessToken}` },
+			throw: false,
+		});
+
+		if (res.status !== 200) {
+			throw new DriveError(res.status, `Folder list failed: ${res.text}`);
+		}
+
+		for (const f of res.json.files ?? []) {
+			out.push({ id: f.id, name: f.name, size: Number(f.size ?? 0) });
+		}
+		pageToken = res.json.nextPageToken ?? undefined;
+	} while (pageToken);
+
+	return out;
+}
+
+/**
+ * Move a file to Drive trash (recoverable ~30 days). NOT a permanent delete:
+ * orphan detection can never be perfectly certain, so trashing keeps an undo path.
+ */
+export async function trashFile(accessToken: string, fileId: string): Promise<void> {
+	const res = await requestUrl({
+		url: `${FILES_URL}/${fileId}`,
+		method: "PATCH",
+		headers: {
+			Authorization: `Bearer ${accessToken}`,
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({ trashed: true }),
+		throw: false,
+	});
+	if (res.status < 200 || res.status >= 300) {
+		throw new DriveError(res.status, `Trash failed: ${res.text}`);
+	}
 }

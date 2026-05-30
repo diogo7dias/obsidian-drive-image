@@ -20,6 +20,7 @@ import {
 	uploadImage,
 } from "./drive";
 import { migrateVaultImages, MigrateConfirmModal, notifyResult } from "./migrate";
+import { findOrphans, notifyTrashResult, PruneConfirmModal, trashOrphans } from "./prune";
 
 const LOCAL_FALLBACK_DIR = "attachments";
 
@@ -62,6 +63,57 @@ export default class DriveImagePlugin extends Plugin {
 				}).open();
 			},
 		});
+
+		this.addCommand({
+			id: "prune-orphan-images",
+			name: "Prune orphaned Drive images",
+			callback: () => {
+				if (!this.isSignedIn()) {
+					new Notice("Drive Image: sign in first (Settings → Drive Image).");
+					return;
+				}
+				this.runPrune();
+			},
+		});
+	}
+
+	private async runPrune() {
+		const progress = new Notice("Drive Image: scanning for orphans...", 0);
+		let scan;
+		try {
+			scan = await findOrphans(this, (msg) => progress.setMessage("Drive Image: " + msg));
+		} catch (e) {
+			progress.hide();
+			const msg = e instanceof Error ? e.message : String(e);
+			new Notice("Drive Image: orphan scan failed. " + msg, 10000);
+			console.error("[drive-image] prune scan crashed:", e);
+			return;
+		}
+		progress.hide();
+
+		if (scan.orphans.length === 0) {
+			new Notice(
+				`Drive Image: no orphans. All ${scan.folderCount} Drive file(s) are still referenced.`,
+				8000,
+			);
+			return;
+		}
+
+		new PruneConfirmModal(this.app, scan.orphans, async () => {
+			const p = new Notice("Drive Image: trashing orphans...", 0);
+			try {
+				const stats = await trashOrphans(this, scan.orphans, (msg) =>
+					p.setMessage("Drive Image: " + msg),
+				);
+				p.hide();
+				notifyTrashResult(stats);
+			} catch (e) {
+				p.hide();
+				const msg = e instanceof Error ? e.message : String(e);
+				new Notice("Drive Image: trashing failed. " + msg, 10000);
+				console.error("[drive-image] prune trash crashed:", e);
+			}
+		}).open();
 	}
 
 	onunload() {}
@@ -256,6 +308,16 @@ export default class DriveImagePlugin extends Plugin {
 		this.settings.folderId = id;
 		await this.saveSettings();
 		return id;
+	}
+
+	/**
+	 * Public Drive context for commands that talk to the API directly (e.g. orphan prune):
+	 * a fresh access token plus the resolved folder ID. Throws if not signed in.
+	 */
+	async resolveDriveContext(): Promise<{ accessToken: string; folderId: string }> {
+		const accessToken = await this.getAccessToken();
+		const folderId = await this.ensureFolder(accessToken);
+		return { accessToken, folderId };
 	}
 }
 
