@@ -56,8 +56,15 @@ export async function migrateVaultImages(
 	// Track which image files had every reference successfully rewritten (safe to delete).
 	const fullyMigrated = new Map<string, boolean>();
 
+	// Breadcrumbs for the crash dump: if the loop throws unexpectedly, these tell us
+	// exactly which note/image was in hand when the metal cracked.
+	let currentNote: string | null = null;
+	let currentTarget: string | null = null;
+
+	try {
 	for (const note of markdownFiles) {
 		stats.notesScanned++;
+		currentNote = note.path;
 		const cache = app.metadataCache.getFileCache(note);
 		if (!cache?.embeds || cache.embeds.length === 0) continue;
 
@@ -73,6 +80,7 @@ export async function migrateVaultImages(
 			const ext = target.extension.toLowerCase();
 			if (!IMAGE_EXTS.has(ext)) continue;
 
+			currentTarget = target.path;
 			stats.imagesFound++;
 
 			let url = uploadedUrls.get(target.path);
@@ -118,6 +126,16 @@ export async function migrateVaultImages(
 			}
 		}
 	}
+	} catch (e) {
+		// Unexpected crash anywhere in the scan loop. Capture where we were, then rethrow
+		// so the command-level handler still shows its notice.
+		await plugin.logError("migrate (hard crash in scan loop)", e, {
+			currentNote,
+			currentTarget,
+			stats,
+		});
+		throw e;
+	}
 
 	// Optionally delete local files that uploaded AND had every reference rewritten cleanly.
 	if (deleteLocals) {
@@ -135,6 +153,16 @@ export async function migrateVaultImages(
 				}
 			}
 		}
+	}
+
+	// Soft failures: the run finished but some files could not be uploaded/rewritten/deleted.
+	// Dump them too — "completed with errors" is still a failure from the user's seat.
+	if (stats.errors.length > 0) {
+		await plugin.logError(
+			"migrate (completed with per-file errors)",
+			new Error(`${stats.errors.length} file(s) failed during migrate`),
+			{ stats },
+		);
 	}
 
 	return stats;

@@ -91,6 +91,15 @@ export async function trashOrphans(
 			console.error(`[drive-image] trash failed for ${f.name} (${f.id}):`, e);
 		}
 	}
+
+	if (stats.errors.length > 0) {
+		await plugin.logError(
+			"prune (per-file trash errors)",
+			new Error(`${stats.errors.length} orphan(s) failed to trash`),
+			{ stats },
+		);
+	}
+
 	return stats;
 }
 

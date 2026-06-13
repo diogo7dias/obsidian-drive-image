@@ -21,6 +21,7 @@ import {
 } from "./drive";
 import { migrateVaultImages, MigrateConfirmModal, notifyResult } from "./migrate";
 import { findOrphans, notifyTrashResult, PruneConfirmModal, trashOrphans } from "./prune";
+import { logError } from "./errorlog";
 
 const LOCAL_FALLBACK_DIR = "attachments";
 
@@ -57,7 +58,8 @@ export default class DriveImagePlugin extends Plugin {
 					} catch (e) {
 						progress.hide();
 						const msg = e instanceof Error ? e.message : String(e);
-						new Notice("Drive Image: migration failed. " + msg, 10000);
+						await this.logError("migrate (command crash)", e, { deleteLocals });
+						new Notice("Drive Image: migration failed. See \"DRIVE EXTENSION ERROR.md\" in your vault root. " + msg, 10000);
 						console.error("[drive-image] migration crashed:", e);
 					}
 				}).open();
@@ -85,7 +87,8 @@ export default class DriveImagePlugin extends Plugin {
 		} catch (e) {
 			progress.hide();
 			const msg = e instanceof Error ? e.message : String(e);
-			new Notice("Drive Image: orphan scan failed. " + msg, 10000);
+			await this.logError("prune scan", e);
+			new Notice("Drive Image: orphan scan failed. See \"DRIVE EXTENSION ERROR.md\" in your vault root. " + msg, 10000);
 			console.error("[drive-image] prune scan crashed:", e);
 			return;
 		}
@@ -110,7 +113,8 @@ export default class DriveImagePlugin extends Plugin {
 			} catch (e) {
 				p.hide();
 				const msg = e instanceof Error ? e.message : String(e);
-				new Notice("Drive Image: trashing failed. " + msg, 10000);
+				await this.logError("prune trash", e, { orphanCount: scan.orphans.length });
+				new Notice("Drive Image: trashing failed. See \"DRIVE EXTENSION ERROR.md\" in your vault root. " + msg, 10000);
 				console.error("[drive-image] prune trash crashed:", e);
 			}
 		}).open();
@@ -130,6 +134,14 @@ export default class DriveImagePlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
+	/**
+	 * Write a structured failure entry to the vault-root error log so failures are
+	 * diagnosable without a console (mobile has none). Never throws.
+	 */
+	async logError(operation: string, error: unknown, data?: Record<string, unknown>) {
+		await logError(this, operation, error, data);
+	}
+
 	// ---- Sign-in flow ----
 
 	async startSignIn() {
@@ -141,6 +153,7 @@ export default class DriveImagePlugin extends Plugin {
 			device = await startDeviceCode(clientId);
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
+			await this.logError("sign-in (device code)", e);
 			new Notice("Drive Image: device-code request failed. " + msg);
 			return;
 		}
@@ -166,6 +179,7 @@ export default class DriveImagePlugin extends Plugin {
 				result = await pollDeviceToken(clientId, clientSecret, device.device_code);
 			} catch (e) {
 				const msg = e instanceof Error ? e.message : String(e);
+				await this.logError("sign-in (token poll)", e);
 				new Notice("Drive Image: token poll failed. " + msg);
 				modal.close();
 				return;
@@ -224,6 +238,7 @@ export default class DriveImagePlugin extends Plugin {
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
 			console.error("[drive-image] upload failed:", e);
+			await this.logError("paste upload", e, { filename, mimeType: file.type, size: buf.byteLength });
 			await this.fallbackToLocal(buf, filename, view, editor, placeholder);
 			new Notice("Drive Image: upload failed, saved locally. " + msg);
 		}
