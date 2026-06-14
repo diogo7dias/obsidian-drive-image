@@ -21,7 +21,7 @@ import {
 } from "./drive";
 import { migrateVaultImages, MigrateConfirmModal, notifyResult } from "./migrate";
 import { findOrphans, notifyTrashResult, PruneConfirmModal, trashOrphans } from "./prune";
-import { logError } from "./errorlog";
+import { logError, SessionExpiredError } from "./errorlog";
 
 const LOCAL_FALLBACK_DIR = "attachments";
 
@@ -58,8 +58,12 @@ export default class DriveImagePlugin extends Plugin {
 					} catch (e) {
 						progress.hide();
 						const msg = e instanceof Error ? e.message : String(e);
-						await this.logError("migrate (command crash)", e, { deleteLocals });
-						new Notice("Drive Image: migration failed. See \"DRIVE EXTENSION ERROR.md\" in your vault root. " + msg, 10000);
+						if (e instanceof SessionExpiredError) {
+							new Notice("Drive Image: " + msg, 10000);
+						} else {
+							await this.logError("migrate (command crash)", e, { deleteLocals });
+							new Notice("Drive Image: migration failed. See \"DRIVE EXTENSION ERROR.md\" in your vault root. " + msg, 10000);
+						}
 						console.error("[drive-image] migration crashed:", e);
 					}
 				}).open();
@@ -87,8 +91,12 @@ export default class DriveImagePlugin extends Plugin {
 		} catch (e) {
 			progress.hide();
 			const msg = e instanceof Error ? e.message : String(e);
-			await this.logError("prune scan", e);
-			new Notice("Drive Image: orphan scan failed. See \"DRIVE EXTENSION ERROR.md\" in your vault root. " + msg, 10000);
+			if (e instanceof SessionExpiredError) {
+				new Notice("Drive Image: " + msg, 10000);
+			} else {
+				await this.logError("prune scan", e);
+				new Notice("Drive Image: orphan scan failed. See \"DRIVE EXTENSION ERROR.md\" in your vault root. " + msg, 10000);
+			}
 			console.error("[drive-image] prune scan crashed:", e);
 			return;
 		}
@@ -113,8 +121,12 @@ export default class DriveImagePlugin extends Plugin {
 			} catch (e) {
 				p.hide();
 				const msg = e instanceof Error ? e.message : String(e);
-				await this.logError("prune trash", e, { orphanCount: scan.orphans.length });
-				new Notice("Drive Image: trashing failed. See \"DRIVE EXTENSION ERROR.md\" in your vault root. " + msg, 10000);
+				if (e instanceof SessionExpiredError) {
+					new Notice("Drive Image: " + msg, 10000);
+				} else {
+					await this.logError("prune trash", e, { orphanCount: scan.orphans.length });
+					new Notice("Drive Image: trashing failed. See \"DRIVE EXTENSION ERROR.md\" in your vault root. " + msg, 10000);
+				}
 				console.error("[drive-image] prune trash crashed:", e);
 			}
 		}).open();
@@ -238,9 +250,14 @@ export default class DriveImagePlugin extends Plugin {
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
 			console.error("[drive-image] upload failed:", e);
-			await this.logError("paste upload", e, { filename, mimeType: file.type, size: buf.byteLength });
+			// Always keep the image safe locally; session-expired is expected, so skip the dump.
 			await this.fallbackToLocal(buf, filename, view, editor, placeholder);
-			new Notice("Drive Image: upload failed, saved locally. " + msg);
+			if (e instanceof SessionExpiredError) {
+				new Notice("Drive Image: saved locally. " + msg, 10000);
+			} else {
+				await this.logError("paste upload", e, { filename, mimeType: file.type, size: buf.byteLength });
+				new Notice("Drive Image: upload failed, saved locally. " + msg);
+			}
 		}
 	}
 
@@ -312,7 +329,13 @@ export default class DriveImagePlugin extends Plugin {
 			await this.saveSettings();
 			return refreshed.access_token;
 		} catch (e) {
-			if (e instanceof OAuthError) throw e;
+			// Dead refresh token: clear it so the UI shows "not signed in" and the user is
+			// prompted to re-auth, instead of retrying a token that will never work again.
+			if (e instanceof OAuthError && e.code === "invalid_grant") {
+				this.settings.tokens = null;
+				await this.saveSettings();
+				throw new SessionExpiredError();
+			}
 			throw e;
 		}
 	}

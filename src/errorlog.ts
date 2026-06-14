@@ -8,6 +8,22 @@ import type DriveImagePlugin from "./main";
  */
 export const ERROR_LOG_PATH = "DRIVE EXTENSION ERROR.md";
 
+/** Friendly, expected message shown when the Drive session has expired/been revoked. */
+export const SESSION_EXPIRED_MSG =
+	"Drive session expired. Open Settings → Drive Image and sign in again.";
+
+/**
+ * Thrown when the OAuth refresh token is dead (invalid_grant). This is an EXPECTED,
+ * user-actionable condition — not a crash — so callers show a clean prompt and skip the
+ * error-log dump. Google expires refresh tokens for apps in "Testing" status after 7 days.
+ */
+export class SessionExpiredError extends Error {
+	constructor(message: string = SESSION_EXPIRED_MSG) {
+		super(message);
+		this.name = "SessionExpiredError";
+	}
+}
+
 function nowIso(): string {
 	// new Date() with no args is fine inside the plugin runtime (this is not a workflow script).
 	return new Date().toISOString();

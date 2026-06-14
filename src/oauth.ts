@@ -100,7 +100,10 @@ export async function refreshAccessToken(
 		throw: false,
 	});
 	if (res.status !== 200) {
-		throw new OAuthError("refresh_failed", `Token refresh failed: ${res.status} ${res.text}`);
+		// invalid_grant = the refresh token is expired or revoked. Distinct code so callers
+		// can clear the dead token and prompt re-sign-in instead of showing a raw stack.
+		const code = res.json?.error === "invalid_grant" ? "invalid_grant" : "refresh_failed";
+		throw new OAuthError(code, `Token refresh failed: ${res.status} ${res.text}`);
 	}
 	const j = res.json;
 	return {

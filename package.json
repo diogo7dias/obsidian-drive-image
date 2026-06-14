@@ -1,6 +1,6 @@
 {
 	"name": "obsidian-drive-image",
-	"version": "0.4.0",
+	"version": "0.4.1",
 	"description": "Obsidian plugin: paste images, auto-upload to Google Drive, replace with public embed URL.",
 	"main": "main.js",
 	"type": "module",

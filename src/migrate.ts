@@ -1,5 +1,6 @@
 import { App, Modal, Notice, Setting, TFile } from "obsidian";
 import type DriveImagePlugin from "./main";
+import { SessionExpiredError } from "./errorlog";
 
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "heif", "bmp"]);
 
@@ -94,6 +95,9 @@ export async function migrateVaultImages(
 					fullyMigrated.set(target.path, true);
 					stats.uploaded++;
 				} catch (e) {
+					// Dead session will fail every remaining image identically — abort the whole
+					// run so the user gets one clean "sign in again" instead of N error rows.
+					if (e instanceof SessionExpiredError) throw e;
 					const message = e instanceof Error ? e.message : String(e);
 					stats.errors.push({ file: target.path, message });
 					fullyMigrated.set(target.path, false);
@@ -127,13 +131,15 @@ export async function migrateVaultImages(
 		}
 	}
 	} catch (e) {
-		// Unexpected crash anywhere in the scan loop. Capture where we were, then rethrow
-		// so the command-level handler still shows its notice.
-		await plugin.logError("migrate (hard crash in scan loop)", e, {
-			currentNote,
-			currentTarget,
-			stats,
-		});
+		// Session expiry is expected and handled by the command layer — do not dump it.
+		// Any other crash: capture where we were, then rethrow so the command shows its notice.
+		if (!(e instanceof SessionExpiredError)) {
+			await plugin.logError("migrate (hard crash in scan loop)", e, {
+				currentNote,
+				currentTarget,
+				stats,
+			});
+		}
 		throw e;
 	}
 
